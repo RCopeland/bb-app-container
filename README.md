@@ -4,7 +4,7 @@ Self-hosted [bb](https://getbb.app/) (the agent IDE), exposing the **Pi
 provider only**, reachable **only over the tailnet** using the same
 tailscale-sidecar pattern as `~/Dev/foundry-vtt-container` and `~/Dev/n8n`.
 No funnel, no published host ports — the web UI is available only at
-`https://bb-app.tail4fde5e.ts.net` while you're on the tailnet.
+`https://<app>.<your-tailnet>.ts.net` while you're on the tailnet.
 
 ## How it works
 
@@ -41,7 +41,7 @@ Verify over the tailnet:
 
 ```bash
 tailscale status | grep bb-app
-curl -sI https://bb-app.tail4fde5e.ts.net
+curl -sI https://<app>.<your-tailnet>.ts.net
 ```
 
 ## Pi config: from your dotfiles
