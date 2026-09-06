@@ -1,0 +1,42 @@
+services:
+  # --- The Bodyguard (Tailscale) ---
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: bb-app-tailscale
+    hostname: bb-app
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTH_KEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/ts-serve.json
+      - TS_CERT_DOMAIN=${TS_CERT_DOMAIN}
+      # Exposed to the tailscale process so the serve-config can substitute
+      # the app's internal port in ts-serve.json.
+      - BB_APP_PORT=${BB_APP_PORT:-8080}
+    volumes:
+      - tailscale_data:/var/lib/tailscale
+      - ./ts-serve.json:/config/ts-serve.json:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+
+  # --- The App (bb-app) ---
+  bb-app:
+    image: ${BB_APP_IMAGE:?set BB_APP_IMAGE in .env}
+    container_name: bb-app
+    # Sharing the tailscale sidecar's netns: no published host ports, so the
+    # app is reachable ONLY over the tailnet (via `tailscale serve`), never
+    # exposed on the LAN or the public internet. No funnel.
+    network_mode: service:tailscale
+    restart: unless-stopped
+    environment:
+      - PORT=${BB_APP_PORT:-8080}
+      - TZ=${TZ:-America/New_York}
+    volumes:
+      - bb_app_data:/data
+    depends_on:
+      - tailscale
+
+volumes:
+  tailscale_data:
+  bb_app_data:
