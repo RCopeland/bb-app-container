@@ -1,86 +1,90 @@
 # bb-app on the homelab
 
-Self-hosted [bb](https://getbb.app/) (the agent IDE), exposed **only over the
-tailnet** using the same tailscale-sidecar pattern as
-`~/Dev/foundry-vtt-container` and `~/Dev/n8n`. No funnel, no published host
-ports — the UI is reachable **only at `https://bb-app.tail4fde5e.ts.net`**
-while you're connected to the tailnet.
-
-## Important — how bb-app is distributed
-
-There is **no official bb Docker image**. bb is a Node.js runtime distributed
-as an npm launcher (`npx bb-app@latest`):
-
-- It runs a **central server + host daemon + web app**, serving the UI on
-  **port `38886`**.
-- It needs **native add-ons** (`better-sqlite3`, `node-pty`, `@parcel/watcher`),
-  so the container must build them (needs a full node image + build toolchain).
-- It runs agents through **provider CLIs** (Claude Code, Codex, Pi, Cursor,
-  OpenCode, Grok…) using **your own API keys**, stored under `~/.bb/`.
-
-So this stack is built from a local `Dockerfile` (image `bb-app:local`), not
-pulled from a registry.
+Self-hosted [bb](https://getbb.app/) (the agent IDE), exposing the **Pi
+provider only**, reachable **only over the tailnet** using the same
+tailscale-sidecar pattern as `~/Dev/foundry-vtt-container` and `~/Dev/n8n`.
+No funnel, no published host ports — the web UI is available only at
+`https://bb-app.tail4fde5e.ts.net` while you're on the tailnet.
 
 ## How it works
 
-- A **tailscale sidecar** (`tailscale/tailscale:latest`) joins the tailnet as
-  host `bb-app`. It provisions an HTTPS cert and runs `tailscale serve` from
-  `ts-serve.json`.
-- **`bb-app` shares the sidecar's network namespace**
-  (`network_mode: service:tailscale`), binding on `127.0.0.1:38886`. It is
-  *not* published on the host, so nothing on the LAN or internet can reach it.
+- A **tailscale sidecar** joins the tailnet as host `bb-app`, provisions an
+  HTTPS cert, and runs `tailscale serve` from `ts-serve.json` (no
+  `AllowFunnel` → tailnet-only).
+- **`bb-app` shares the sidecar's namespace** (`network_mode:
+  service:tailscale`), binding `127.0.0.1:38886`. It is not published on the
+  host, so nothing on the LAN/internet can reach it.
 - `ts-serve.json` proxies `443` → `127.0.0.1:${BB_APP_PORT}` for
-  `${TS_CERT_DOMAIN}`. There is **no `AllowFunnel`** — tailnet-only, by design.
-- This matches bb's own security guidance: the server API is unauthenticated
-  and can run commands/read files, so it must live behind a trusted network
-  boundary (the tailnet) — no public exposure.
+  `${TS_CERT_DOMAIN}`.
 
-## Build & run
+## Building the image (local — no official image exists)
 
-1. Copy `.env.example` to `.env` and set:
-   - `TAILSCALE_AUTH_KEY` — a tailnet auth key (reuse the foundry one or mint a
-     new node key).
-   - `BB_APP_PORT` — `38886` (bb's web UI port).
-   - `BB_APP_IMAGE` — `bb-app:local` (built from the `Dockerfile`).
-2. Build the image:
-   ```bash
-   docker build -t bb-app:local .
-   ```
-3. Bring it up:
-   ```bash
-   docker compose up -d
-   ```
-4. Verify over the tailnet:
-   ```bash
-   tailscale status | grep bb-app
-   curl -sI https://bb-app.tail4fde5e.ts.net
-   ```
+bb is an npm launcher, not a container. `Dockerfile` builds `bb-app:local`:
 
-## Provider CLIs & credentials
+```bash
+docker build -t bb-app:local .
+```
 
-For bb to actually run agents **inside this container**, the provider CLIs you
-use must be installed in the image **and** authenticated with your keys. These
-are deliberately **not** baked into the committed `Dockerfile` (they're
-secrets). Decide which providers you need, then see the provider section of the
-`Dockerfile` and configure keys via:
-- env vars (e.g. `ANTHROPIC_API_KEY`) passed in `compose.yaml`, or
-- the mounted `~/.bb` data dir (`env.json` / `config.json`), persisted in the
-  `bb_app_data` volume.
+The image installs `bb-app` **and** `@earendil-works/pi-coding-agent` (the CLI
+bb's Pi provider drives via `pi --mode rpc`).
 
-Projects/repos bb should work on must be **mounted into the container** too
-(e.g. a read-write `hostPath` of `~/Dev`), otherwise the container has nowhere
-to operate.
+## Run
+
+Fill `.env` (`TAILSCALE_AUTH_KEY`, `BB_APP_IMAGE`, `BB_APP_PORT`), then:
+
+```bash
+docker compose up -d --build
+docker compose logs -f bb-app
+```
+
+Verify over the tailnet:
+
+```bash
+tailscale status | grep bb-app
+curl -sI https://bb-app.tail4fde5e.ts.net
+```
+
+## Pi config: from your dotfiles
+
+On every start the entrypoint `sync`s `~/.pi` from
+`https://github.com/rcopeland/dotfiles` (settings.json, mcp.json, extensions,
+skills, themes, agents, agent-models.json). It uses a **lightweight git copy of
+just `.pi`** rather than full `yadm clone`, because the dotfiles' `bootstrap`
+targets host package managers (pacman/brew/KDE) that don't belong in a slim
+container. Secrets (`auth.json`, `sessions/`) aren't in the repo, so they
+survive syncs.
+
+- Point it elsewhere: set `BB_APP_DOTFILES_REPO` in the container env.
+- Skip the sync: set `BB_SYNC_DOTFILES=0`.
+
+## Pi auth (first time)
+
+bb's Pi provider needs Pi signed in. Do it once in-browser against the running
+container (writes `~/.pi/agent/auth.json` into the persisted home volume):
+
+```bash
+docker compose exec bb-app pi
+# in pi: /login, pick your provider (openai-codex / codex subscription), approve
+```
+
+The credential persists in `bb_app_home`, not in the image or compose. Rotate
+it the same way you would any API key.
+
+## Security notes
+
+- The bb server API is **unauthenticated and can run commands/read files**;
+  it is safe here only because it's behind the tailnet (no funnel/ports). Do
+  **not** add ports or funnel.
+- A compromise of this container exposes both your code (`~/Dev` is mounted
+  read/write) and your signed-in Pi credential — treat the box as trusted
+  infra, keep it patched, and rotate Pi's credential periodically.
 
 ## Files
 
-| File              | Purpose                                  |
-|-------------------|------------------------------------------|
-| `Dockerfile`      | Local bb-app image build (npm launcher)  |
-| `compose.yaml`    | tailscale sidecar + bb-app service       |
-| `ts-serve.json`   | `tailscale serve` config (tailnet-only)  |
-| `.env`/`.env.example` | secrets/config                       |
-
-## Privacy note
-
-bb sends anonymous usage telemetry by default. Opt out by setting
-`BB_TELEMETRY=false` in the container environment (see `compose.yaml`).
+| File              | Purpose                                    |
+|-------------------|--------------------------------------------|
+| `Dockerfile`      | local bb-app + Pi image build              |
+| `entrypoint.sh`   | sync dotfiles `.pi` + start bb             |
+| `compose.yaml`    | tailscale sidecar + bb-app                 |
+| `ts-serve.json`   | `tailscale serve` config (tailnet-only)    |
+| `.env`/`.env.example` | secrets/config                         |

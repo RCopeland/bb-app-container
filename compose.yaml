@@ -22,7 +22,10 @@ services:
 
   # --- The App (bb-app) ---
   bb-app:
-    image: ${BB_APP_IMAGE:?set BB_APP_IMAGE in .env}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bb-app:local
     container_name: bb-app
     # Sharing the tailscale sidecar's netns: no published host ports, so the
     # app is reachable ONLY over the tailnet (via `tailscale serve`), never
@@ -32,14 +35,18 @@ services:
     environment:
       - PORT=${BB_APP_PORT:-38886}
       - TZ=${TZ:-America/New_York}
-      # bb sends anonymous telemetry by default; opt out for a homelab box
       - BB_TELEMETRY=false
-    # bb stores all its state under ~/.bb (provider env, config, client, data).
+      - HOME=/home/node
+      # Optional: pin the pi executable used by bb's Pi provider bridge.
+      # - BB_PI_BRIDGE_COMMAND=/usr/local/bin/pi
     volumes:
-      - bb_app_data:/home/node/.bb
+      # Persistent home -> bb data (~/.bb), pi config/state (~/.pi), yadm.
+      - bb_app_home:/home/node
+      # Agent workspace: mount host ~/Dev read/write so pi can work on repos.
+      - /home/rob/Dev:/home/node/Dev
     depends_on:
       - tailscale
 
 volumes:
   tailscale_data:
-  bb_app_data:
+  bb_app_home:
