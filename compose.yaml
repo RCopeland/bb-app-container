@@ -12,6 +12,9 @@ services:
       # Exposed to the tailscale process so the serve-config can substitute
       # the app's internal port in ts-serve.json.
       - BB_APP_PORT=${BB_APP_PORT:-38886}
+      # Outbound HTTP proxy into the tailnet (userspace networking needs
+      # a proxy for apps sharing the netns to reach the tailnet).
+      - TS_TAILSCALED_EXTRA_ARGS=--outbound-http-proxy-listen=127.0.0.1:1080
     volumes:
       - tailscale_data:/var/lib/tailscale
       - ./ts-serve.json:/config/ts-serve.json:ro
@@ -37,6 +40,20 @@ services:
       - TZ=${TZ:-America/New_York}
       - BB_TELEMETRY=false
       - HOME=/home/node
+      # Route pi/Node HTTP through the tailscale sidecar proxy so pi
+      # can reach 9router. NO_PROXY keeps local, docker, LAN, and
+      # getbb.app traffic direct through bb/pi core.
+      - HTTP_PROXY=http://127.0.0.1:1080
+      - HTTPS_PROXY=http://127.0.0.1:1080
+      - NODE_USE_ENV_PROXY=1
+      - NO_PROXY=localhost,127.0.0.1,::1,*.getbb.app,172.16.0.0/12,192.168.0.0/16
+      # Pi config sources. The entrypoint syncs ~/.pi from two repos, split by
+      # ownership: dotfiles owns runtime config, ai-docs owns agents/skills.
+      # Defaults are set in entrypoint.sh; override or disable here.
+      # - BB_APP_DOTFILES_REPO=https://github.com/rcopeland/dotfiles
+      # - BB_SYNC_DOTFILES=0
+      # - BB_APP_AI_DOCS_REPO=https://github.com/RCopeland/ai-docs
+      # - BB_SYNC_AI_DOCS=0
       # Optional: pin the pi executable used by bb's Pi provider bridge.
       # - BB_PI_BRIDGE_COMMAND=/usr/local/bin/pi
     volumes:
